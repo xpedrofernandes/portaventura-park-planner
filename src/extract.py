@@ -105,8 +105,8 @@ class Constraints:
             raise ConstraintValidationError(f"prefer_tags must be a list of strings: {prefer_tags!r}")
 
         allowed = set(ALLOWED_TAGS)
-        exclude_tags = [t.lower() for t in exclude_tags if t.lower() in allowed]
-        prefer_tags = [t.lower() for t in prefer_tags if t.lower() in allowed]
+        exclude_tags = list(dict.fromkeys(t.lower() for t in exclude_tags if t.lower() in allowed))
+        prefer_tags = list(dict.fromkeys(t.lower() for t in prefer_tags if t.lower() in allowed))
 
         return cls(
             arrival_time=arrival_time,

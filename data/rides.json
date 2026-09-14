@@ -1,158 +1,158 @@
 [
   {
     "name": "Bumper Cars",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 100,
+    "tags": ["family"],
+    "zone": "Mystic Quarter"
   },
   {
     "name": "Bungee Jump",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["thrill", "heights"],
+    "zone": "Thrill Peak"
   },
   {
     "name": "Circus Train",
     "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "tags": ["family", "kids"],
+    "zone": "Kids Kingdom"
   },
   {
     "name": "Crazy Dance",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 110,
+    "tags": ["spinning", "family"],
+    "zone": "Kids Kingdom"
   },
   {
     "name": "Dizzy Dropper",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 120,
+    "tags": ["thrill", "spinning"],
+    "zone": "Thrill Peak"
   },
   {
     "name": "Drop Tower",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["thrill", "heights"],
+    "zone": "Thrill Peak"
   },
   {
     "name": "Flying Coaster",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["coaster", "thrill", "heights"],
+    "zone": "Coaster Canyon"
   },
   {
     "name": "Free Fall",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["thrill", "heights"],
+    "zone": "Thrill Peak"
   },
   {
     "name": "Giant Wheel",
     "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "tags": ["family", "heights"],
+    "zone": "Lagoon Cove"
   },
   {
     "name": "Giga Coaster",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 145,
+    "tags": ["coaster", "thrill", "heights"],
+    "zone": "Coaster Canyon"
   },
   {
     "name": "Go-Karts",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["family", "thrill"],
+    "zone": "Mystic Quarter"
   },
   {
     "name": "Haunted House",
     "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "tags": ["indoor", "family"],
+    "zone": "Mystic Quarter"
   },
   {
     "name": "Himalaya Ride",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 100,
+    "tags": ["spinning", "family"],
+    "zone": "Mystic Quarter"
   },
   {
     "name": "Inverted Coaster",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["coaster", "thrill", "heights"],
+    "zone": "Coaster Canyon"
   },
   {
     "name": "Kiddie Coaster",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 90,
+    "tags": ["coaster", "kids", "family"],
+    "zone": "Kids Kingdom"
   },
   {
     "name": "Merry Go Round",
     "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "tags": ["family", "kids"],
+    "zone": "Kids Kingdom"
   },
   {
     "name": "Oz Theatre",
     "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "tags": ["indoor", "family"],
+    "zone": "Mystic Quarter"
   },
   {
     "name": "Rapids Ride",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 110,
+    "tags": ["water", "family"],
+    "zone": "Lagoon Cove"
   },
   {
     "name": "Roller Coaster",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 130,
+    "tags": ["coaster", "thrill"],
+    "zone": "Coaster Canyon"
   },
   {
     "name": "Spinning Coaster",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 120,
+    "tags": ["coaster", "spinning", "thrill"],
+    "zone": "Coaster Canyon"
   },
   {
     "name": "Spiral Slide",
     "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "tags": ["family", "kids"],
+    "zone": "Kids Kingdom"
   },
   {
     "name": "Superman Ride",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["coaster", "thrill", "heights"],
+    "zone": "Coaster Canyon"
   },
   {
     "name": "Swing Ride",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 120,
+    "tags": ["thrill", "heights", "spinning"],
+    "zone": "Lagoon Cove"
   },
   {
     "name": "Vertical Drop",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["thrill", "heights"],
+    "zone": "Thrill Peak"
   },
   {
     "name": "Water Ride",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 120,
+    "tags": ["water", "thrill"],
+    "zone": "Lagoon Cove"
   },
   {
     "name": "Zipline",
-    "min_height_cm": null,
-    "tags": [],
-    "zone": null
+    "min_height_cm": 140,
+    "tags": ["thrill", "heights"],
+    "zone": "Thrill Peak"
   }
 ]
