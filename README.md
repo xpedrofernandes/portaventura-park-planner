@@ -69,7 +69,7 @@ You'll also need the raw CSVs (`attendance.csv`, `entity_schedule.csv`, `link_at
 .venv\Scripts\python scripts\train_wait_time_model.py
 ```
 
-This populates `data/processed/` and `models/` (both git-ignored — regenerate them locally rather than expecting them after a clone).
+This populates `data/processed/` (git-ignored, regenerate it locally) and `models/wait_time_lgbm.txt`, which is committed to the repo (so it deploys with it to Streamlit Cloud) -- if you regenerate it, commit the updated file so the deployed app stays in sync.
 
 ## Running it
 
