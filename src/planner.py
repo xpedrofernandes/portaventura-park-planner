@@ -6,8 +6,10 @@ walks the visitor's time window: at each step, predict the queue wait (via
 the trained LightGBM model in models/) for every remaining ride *at the time
 the visitor would actually arrive there* (accounting for a 5-minute walk
 within a zone or 10 minutes between zones), and go to whichever ride has the
-lowest predicted wait -- with a small bonus for rides matching prefer_tags so
-close calls favor them. Rides themselves take 5 minutes.
+lowest predicted wait. Rides matching prefer_tags are a hard priority tier --
+scheduled before any non-matching ride, for as long as a preferred ride is
+still reachable before end_time -- not just a tiebreaker. Rides themselves
+take 5 minutes.
 
 This is a greedy heuristic (cheapest-next-ride), not a globally optimal tour --
 it won't always minimize total wait over the whole day, but it's simple and
@@ -44,11 +46,6 @@ DEFAULT_END = "22:00"
 WALK_SAME_ZONE_MIN = 5
 WALK_DIFF_ZONE_MIN = 10
 RIDE_DURATION_MIN = 5
-
-# Rides matching a prefer_tag are ranked as if their predicted wait were this
-# much shorter, so they win close calls without overriding a much shorter
-# wait elsewhere.
-PREFERENCE_BONUS_MIN = 5.0
 
 
 def load_rides(path: str = RIDES_PATH) -> list[dict]:
@@ -181,9 +178,9 @@ def build_schedule(
     current_zone = None
     schedule = []
 
-    while candidates:
+    def cheapest_in(pool: dict[str, dict]) -> dict | None:
         best = None
-        for name, ride in candidates.items():
+        for name, ride in pool.items():
             if current_zone is None:
                 travel = 0
             elif ride["zone"] == current_zone:
@@ -205,17 +202,33 @@ def build_schedule(
                 defaults["temp"],
                 defaults["rain"],
             )
-            is_preferred = bool(prefer & set(ride["tags"]))
-            score = predicted_wait - (PREFERENCE_BONUS_MIN if is_preferred else 0.0)
 
-            if best is None or score < best["score"]:
+            if best is None or predicted_wait < best["predicted_wait"]:
                 best = {
                     "name": name,
                     "ride": ride,
                     "arrive_at": arrive_at,
                     "predicted_wait": predicted_wait,
-                    "score": score,
                 }
+        return best
+
+    while candidates:
+        # Preferred rides are a hard priority tier, not a tiebreaker: as long
+        # as any prefer_tags ride is still reachable before end_time, it's
+        # scheduled next (cheapest wait among preferred candidates) rather
+        # than losing to a cheaper non-preferred ride. Only once no preferred
+        # candidate is reachable does selection fall back to all remaining
+        # rides.
+        best = None
+        if prefer:
+            preferred_pool = {
+                name: ride for name, ride in candidates.items() if prefer & set(ride["tags"])
+            }
+            if preferred_pool:
+                best = cheapest_in(preferred_pool)
+
+        if best is None:
+            best = cheapest_in(candidates)
 
         if best is None:
             break  # nothing reachable before end_time

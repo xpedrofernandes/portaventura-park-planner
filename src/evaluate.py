@@ -46,6 +46,9 @@ EVAL_DATE = dt.date(2022, 7, 15)
 
 FIELDS = ["arrival_time", "end_time", "max_height_cm", "exclude_tags", "prefer_tags"]
 
+# How many of the schedule's leading stops to check for prefer_tags satisfaction.
+PREFER_TAGS_WINDOW = 5
+
 
 def _values_match(actual, expected) -> bool:
     if isinstance(expected, list):
@@ -88,6 +91,24 @@ def _schedule_violations(schedule: list[dict], constraints: Constraints, ride_lo
     return violations
 
 
+def _prefer_tags_satisfaction(
+    schedule: list[dict], constraints: Constraints, ride_lookup: dict
+) -> float | None:
+    """Fraction of the first PREFER_TAGS_WINDOW scheduled rides that match at
+    least one of the (extracted) prefer_tags. None if prefer_tags is empty or
+    the schedule is empty -- not applicable rather than a 0."""
+    prefer = set(constraints.prefer_tags)
+    if not prefer:
+        return None
+
+    window = schedule[:PREFER_TAGS_WINDOW]
+    if not window:
+        return None
+
+    matches = sum(1 for stop in window if prefer & set(ride_lookup[stop["ride"]]["tags"]))
+    return matches / len(window)
+
+
 def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> dict:
     expected = case["expected"]
 
@@ -106,6 +127,7 @@ def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> 
             "extraction_ok": False,
             "constraint_ok": False,
             "violations": ["extraction raised ConstraintValidationError, no schedule built"],
+            "prefer_satisfaction": None,
         }
 
     actual = dataclasses.asdict(constraints)
@@ -115,6 +137,7 @@ def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> 
     schedule = build_schedule(constraints, rides=rides, booster=booster, date=EVAL_DATE)
     violations = _schedule_violations(schedule, constraints, ride_lookup)
     constraint_ok = not violations
+    prefer_satisfaction = _prefer_tags_satisfaction(schedule, constraints, ride_lookup)
 
     return {
         "id": case["id"],
@@ -125,6 +148,7 @@ def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> 
         "extraction_ok": extraction_ok,
         "constraint_ok": constraint_ok,
         "violations": violations,
+        "prefer_satisfaction": prefer_satisfaction,
     }
 
 
@@ -144,14 +168,32 @@ def run_evaluation(eval_set_path: str = EVAL_SET_PATH) -> list[dict]:
     return results
 
 
+def _prefer_satisfaction_pct(results: list[dict]) -> tuple[float, int] | None:
+    """Mean prefer_tags satisfaction (as a %) over cases where it's applicable,
+    plus how many cases that was. None if no case had prefer_tags."""
+    applicable = [r["prefer_satisfaction"] for r in results if r["prefer_satisfaction"] is not None]
+    if not applicable:
+        return None
+    return 100 * sum(applicable) / len(applicable), len(applicable)
+
+
 def print_report(results: list[dict]) -> None:
     n = len(results)
     extraction_hits = sum(r["extraction_ok"] for r in results)
     constraint_hits = sum(r["constraint_ok"] for r in results)
+    prefer_stats = _prefer_satisfaction_pct(results)
 
     print("\n=== Summary ===")
     print(f"Extraction accuracy:          {extraction_hits}/{n} ({100 * extraction_hits / n:.1f}%)")
     print(f"Plan constraint-satisfaction: {constraint_hits}/{n} ({100 * constraint_hits / n:.1f}%)")
+    if prefer_stats is None:
+        print("Prefer-tags satisfaction (first 5 rides): not exercised (no case had prefer_tags)")
+    else:
+        pct, n_applicable = prefer_stats
+        print(
+            f"Prefer-tags satisfaction (first 5 rides): {pct:.1f}% "
+            f"(mean over {n_applicable} cases with prefer_tags)"
+        )
 
     print("\n=== Extraction accuracy by field ===")
     for field in FIELDS:
@@ -191,6 +233,12 @@ def print_multi_run_report(all_results: list[list[dict]]) -> None:
 
     extraction_pcts = [100 * sum(r["extraction_ok"] for r in run) / n_cases for run in all_results]
     constraint_pcts = [100 * sum(r["constraint_ok"] for r in run) / n_cases for run in all_results]
+    prefer_pcts = []
+    for run in all_results:
+        stats = _prefer_satisfaction_pct(run)
+        if stats is not None:
+            prefer_pcts.append(stats[0])
+
     ext_stats = _pct_stats(extraction_pcts)
     con_stats = _pct_stats(constraint_pcts)
 
@@ -203,8 +251,18 @@ def print_multi_run_report(all_results: list[list[dict]]) -> None:
         f"Plan constraint-satisfaction: mean {con_stats['mean']:.1f}%  "
         f"(min {con_stats['min']:.1f}%, max {con_stats['max']:.1f}%)"
     )
+    if prefer_pcts:
+        pref_stats = _pct_stats(prefer_pcts)
+        print(
+            f"Prefer-tags satisfaction:      mean {pref_stats['mean']:.1f}%  "
+            f"(min {pref_stats['min']:.1f}%, max {pref_stats['max']:.1f}%)"
+        )
+    else:
+        print("Prefer-tags satisfaction:      not exercised (no case had prefer_tags)")
     print(f"Per-run extraction accuracy:          {[f'{p:.1f}%' for p in extraction_pcts]}")
     print(f"Per-run plan constraint-satisfaction: {[f'{p:.1f}%' for p in constraint_pcts]}")
+    if prefer_pcts:
+        print(f"Per-run prefer-tags satisfaction:     {[f'{p:.1f}%' for p in prefer_pcts]}")
 
     request_by_id = {r["id"]: r["request"] for r in all_results[0]}
     fail_counts: dict[int, int] = {case_id: 0 for case_id in request_by_id}
