@@ -26,7 +26,12 @@ You extract ride-planning constraints from a theme park visitor's natural-langua
 
 The park opens at 09:00 and closes at 22:00.
 
-Only populate a field when the request states or clearly implies it; otherwise omit it.
+Only populate a field when the request states or clearly implies it; otherwise omit that field \
+from the tool call entirely. Never fill an unknown field with a placeholder string such as \
+"<UNKNOWN>", "N/A", or "" -- omitting it is always correct, even for a request that has \
+is_planning_request=true but doesn't specify that particular detail (e.g. "we only have 2 \
+hours" implies planning intent but gives no clock time, so arrival_time/end_time are both \
+omitted, not filled with a placeholder).
 - arrival_time / end_time: 24-hour "HH:MM" time strings for when the visit starts/ends. Apply \
 these conventions:
   - "from opening" / "when the gates open" -> arrival_time "09:00".
@@ -46,6 +51,14 @@ shortest one -- it's the binding constraint.
 use tags from this fixed list: {", ".join(ALLOWED_TAGS)}. Pick the closest matching tag(s) \
 for anything the visitor implies (e.g. "big drop" -> "thrill" and/or "heights"); do not invent \
 other tags. Always include these two fields, using an empty list if nothing applies.
+- is_planning_request: true only if the request contains at least one of: an arrival or end \
+time you can resolve to a clock time or one of the named conventions above (e.g. "morning", \
+"until close"), party/child details (who's coming, ages), a height constraint, or ride \
+preferences/exclusions. false otherwise -- including a vague relative duration with no \
+anchoring clock time (e.g. "we only have 2 hours", "just a quick visit") if nothing else in \
+the request resolves to arrival_time/end_time/max_height_cm/exclude_tags/prefer_tags either; a \
+general question about the park ("what time does the park close?", "is the food any good?"); \
+small talk; or unrelated/gibberish text. Always include this field.
 """
 
 TOOL_SCHEMA = {
@@ -76,8 +89,16 @@ TOOL_SCHEMA = {
                 "items": {"type": "string", "enum": ALLOWED_TAGS},
                 "description": "Ride tags to prefer. Empty list if none.",
             },
+            "is_planning_request": {
+                "type": "boolean",
+                "description": (
+                    "True if the request expresses actual visit-planning intent (arrival/end "
+                    "time, party/height details, ride preferences). False for general "
+                    "questions, small talk, or unrelated/gibberish text."
+                ),
+            },
         },
-        "required": ["exclude_tags", "prefer_tags"],
+        "required": ["exclude_tags", "prefer_tags", "is_planning_request"],
     },
 }
 
@@ -95,6 +116,7 @@ class Constraints:
     max_height_cm: int | None = None
     exclude_tags: list[str] = field(default_factory=list)
     prefer_tags: list[str] = field(default_factory=list)
+    is_planning_request: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> "Constraints":
@@ -103,6 +125,7 @@ class Constraints:
         max_height_cm = data.get("max_height_cm")
         exclude_tags = data.get("exclude_tags", [])
         prefer_tags = data.get("prefer_tags", [])
+        is_planning_request = data.get("is_planning_request", True)
 
         for label, value in (("arrival_time", arrival_time), ("end_time", end_time)):
             if value is not None and not _TIME_RE.match(value):
@@ -116,6 +139,10 @@ class Constraints:
             raise ConstraintValidationError(f"exclude_tags must be a list of strings: {exclude_tags!r}")
         if not isinstance(prefer_tags, list) or not all(isinstance(t, str) for t in prefer_tags):
             raise ConstraintValidationError(f"prefer_tags must be a list of strings: {prefer_tags!r}")
+        if not isinstance(is_planning_request, bool):
+            raise ConstraintValidationError(
+                f"is_planning_request must be a bool: {is_planning_request!r}"
+            )
 
         allowed = set(ALLOWED_TAGS)
         exclude_tags = list(dict.fromkeys(t.lower() for t in exclude_tags if t.lower() in allowed))
@@ -127,6 +154,7 @@ class Constraints:
             max_height_cm=max_height_cm,
             exclude_tags=exclude_tags,
             prefer_tags=prefer_tags,
+            is_planning_request=is_planning_request,
         )
 
 
