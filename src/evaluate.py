@@ -1,7 +1,7 @@
 """Evaluate the extract.py -> planner.py pipeline against data/eval_set.json.
 
 For every case: run the request through extract_constraints(), then build a
-schedule from the *extracted* constraints. Reports two independent metrics:
+schedule from the *extracted* constraints. Reports four independent metrics:
 
   - extraction accuracy: does every field named in the case's `expected`
     dict exactly match what extract.py returned? (fields not mentioned in
@@ -12,6 +12,14 @@ schedule from the *extracted* constraints. Reports two independent metrics:
     taller than max_height_cm, none with an excluded tag, nothing scheduled
     outside [arrival_time, end_time))? This checks planner.py's own
     correctness, independent of whether extraction was itself accurate.
+  - prefer-tags satisfaction: for cases with non-empty extracted
+    prefer_tags, what fraction of the first 5 scheduled rides match one.
+  - zone-clustering comparison: for every case, also builds the legacy
+    park-wide greedy schedule (build_schedule_greedy) alongside the default
+    zone-clustered one (build_schedule_zoned) for the same constraints, and
+    reports mean total wait, total walk time, zone changes, and rides
+    completed for each -- demonstrating the zoned planner's improvement
+    across the whole eval set, not just one request.
 
 Usage:
     python src/evaluate.py              # single run
@@ -32,8 +40,11 @@ from planner import (
     DEFAULT_ARRIVAL,
     DEFAULT_END,
     build_schedule,
+    build_schedule_greedy,
     load_model,
     load_rides,
+    load_zones,
+    schedule_stats,
     _parse_hhmm,
 )
 
@@ -109,7 +120,7 @@ def _prefer_tags_satisfaction(
     return matches / len(window)
 
 
-def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> dict:
+def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict, zones: dict) -> dict:
     expected = case["expected"]
 
     try:
@@ -128,16 +139,20 @@ def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> 
             "constraint_ok": False,
             "violations": ["extraction raised ConstraintValidationError, no schedule built"],
             "prefer_satisfaction": None,
+            "zoned_stats": None,
+            "greedy_stats": None,
         }
 
     actual = dataclasses.asdict(constraints)
     field_results = _extraction_field_results(actual, expected)
     extraction_ok = all(field_results.values())
 
-    schedule = build_schedule(constraints, rides=rides, booster=booster, date=EVAL_DATE)
+    schedule = build_schedule(constraints, rides=rides, booster=booster, date=EVAL_DATE, zones=zones)
     violations = _schedule_violations(schedule, constraints, ride_lookup)
     constraint_ok = not violations
     prefer_satisfaction = _prefer_tags_satisfaction(schedule, constraints, ride_lookup)
+
+    greedy_schedule = build_schedule_greedy(constraints, rides=rides, booster=booster, date=EVAL_DATE)
 
     return {
         "id": case["id"],
@@ -149,6 +164,8 @@ def evaluate_case(case: dict, rides: list[dict], booster, ride_lookup: dict) -> 
         "constraint_ok": constraint_ok,
         "violations": violations,
         "prefer_satisfaction": prefer_satisfaction,
+        "zoned_stats": schedule_stats(schedule),
+        "greedy_stats": schedule_stats(greedy_schedule),
     }
 
 
@@ -158,13 +175,14 @@ def run_evaluation(eval_set_path: str = EVAL_SET_PATH) -> list[dict]:
 
     rides = load_rides()
     booster = load_model()
+    zones = load_zones()
     ride_lookup = {r["name"]: r for r in rides}
 
     results = []
     cases = eval_set["cases"]
     for i, case in enumerate(cases, 1):
         print(f"Running case {i}/{len(cases)} (id={case['id']})...")
-        results.append(evaluate_case(case, rides, booster, ride_lookup))
+        results.append(evaluate_case(case, rides, booster, ride_lookup, zones))
     return results
 
 
@@ -175,6 +193,36 @@ def _prefer_satisfaction_pct(results: list[dict]) -> tuple[float, int] | None:
     if not applicable:
         return None
     return 100 * sum(applicable) / len(applicable), len(applicable)
+
+
+def _zone_comparison_summary(results: list[dict]) -> dict[str, dict[str, float]] | None:
+    """Mean num_rides/total_wait_min/total_walk_min/zone_changes across cases,
+    for the greedy and zoned schedulers separately. None if no case produced
+    stats (e.g. every case's extraction raised)."""
+    zoned = [r["zoned_stats"] for r in results if r["zoned_stats"] is not None]
+    greedy = [r["greedy_stats"] for r in results if r["greedy_stats"] is not None]
+    if not zoned or not greedy:
+        return None
+
+    def _mean_stats(stats_list: list[dict]) -> dict[str, float]:
+        keys = ["num_rides", "total_wait_min", "total_walk_min", "zone_changes"]
+        return {k: sum(s[k] for s in stats_list) / len(stats_list) for k in keys}
+
+    return {"greedy": _mean_stats(greedy), "zoned": _mean_stats(zoned)}
+
+
+def _print_zone_comparison_table(summary: dict[str, dict[str, float]], n_cases: int) -> None:
+    g, z = summary["greedy"], summary["zoned"]
+    print(f"(mean over {n_cases} cases)")
+    print(f"{'':<22} {'Rides':>7} {'Wait (min)':>12} {'Walk (min)':>12} {'Zone changes':>14}")
+    print(
+        f"{'Greedy (park-wide)':<22} {g['num_rides']:>7.1f} {g['total_wait_min']:>12.1f} "
+        f"{g['total_walk_min']:>12.1f} {g['zone_changes']:>14.1f}"
+    )
+    print(
+        f"{'Zoned (clustered)':<22} {z['num_rides']:>7.1f} {z['total_wait_min']:>12.1f} "
+        f"{z['total_walk_min']:>12.1f} {z['zone_changes']:>14.1f}"
+    )
 
 
 def print_report(results: list[dict]) -> None:
@@ -194,6 +242,14 @@ def print_report(results: list[dict]) -> None:
             f"Prefer-tags satisfaction (first 5 rides): {pct:.1f}% "
             f"(mean over {n_applicable} cases with prefer_tags)"
         )
+
+    print("\n=== Zone-clustering comparison (greedy vs zoned) ===")
+    zone_summary = _zone_comparison_summary(results)
+    if zone_summary is None:
+        print("not exercised (no case produced a schedule)")
+    else:
+        n_with_stats = sum(1 for r in results if r["zoned_stats"] is not None)
+        _print_zone_comparison_table(zone_summary, n_with_stats)
 
     print("\n=== Extraction accuracy by field ===")
     for field in FIELDS:
@@ -263,6 +319,20 @@ def print_multi_run_report(all_results: list[list[dict]]) -> None:
     print(f"Per-run plan constraint-satisfaction: {[f'{p:.1f}%' for p in constraint_pcts]}")
     if prefer_pcts:
         print(f"Per-run prefer-tags satisfaction:     {[f'{p:.1f}%' for p in prefer_pcts]}")
+
+    zone_summaries = [s for s in (_zone_comparison_summary(run) for run in all_results) if s is not None]
+    print("\n=== Zone-clustering comparison across runs (mean per run, then mean/min/max of that) ===")
+    if not zone_summaries:
+        print("not exercised (no case produced a schedule)")
+    else:
+        for label in ("greedy", "zoned"):
+            for key in ("total_wait_min", "total_walk_min", "zone_changes"):
+                values = [s[label][key] for s in zone_summaries]
+                stats = _pct_stats(values)
+                print(
+                    f"{label:<7} {key:<15} mean {stats['mean']:>6.1f}  "
+                    f"(min {stats['min']:>6.1f}, max {stats['max']:>6.1f})"
+                )
 
     request_by_id = {r["id"]: r["request"] for r in all_results[0]}
     fail_counts: dict[int, int] = {case_id: 0 for case_id in request_by_id}

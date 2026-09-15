@@ -1,22 +1,37 @@
-"""Greedy same-day ride scheduler.
+"""Same-day ride scheduler.
 
 Takes a Constraints object (see extract.py), filters data/rides.json down to
-rides that satisfy the height and exclude_tags constraints, then greedily
-walks the visitor's time window: at each step, predict the queue wait (via
-the trained LightGBM model in models/) for every remaining ride *at the time
-the visitor would actually arrive there* (accounting for a 5-minute walk
-within a zone or 10 minutes between zones), and go to whichever ride has the
-lowest predicted wait. Rides matching prefer_tags are a hard priority tier --
-scheduled before any non-matching ride, for as long as a preferred ride is
-still reachable before end_time -- not just a tiebreaker. Rides themselves
-take 5 minutes.
+rides that satisfy the height and exclude_tags constraints, then builds a
+visit schedule using the trained LightGBM model (models/) to predict queue
+wait *at the time the visitor would actually arrive* at each ride. Rides
+matching prefer_tags are a hard priority tier -- scheduled before any
+non-matching ride, for as long as a preferred one is still reachable before
+end_time -- not just a tiebreaker. Rides themselves take 5 minutes.
 
-This is a greedy heuristic (cheapest-next-ride), not a globally optimal tour --
-it won't always minimize total wait over the whole day, but it's simple and
-fast, and re-evaluates every step against the live model prediction.
+Two schedulers are provided:
+
+- build_schedule_zoned (the default, exposed as build_schedule): works
+  through one zone at a time -- cheapest-wait-first within it, prefer_tags
+  still a hard priority tier -- and only moves to another zone once the
+  current one is exhausted (nothing left in it reachable before end_time).
+  When moving, an adjacent zone (data/zones.json) is preferred over a
+  distant one. Every zone is tried as the starting zone; whichever full
+  schedule has the lowest total (wait + walk) time cost wins. This avoids
+  the park-wide criss-crossing build_schedule_greedy is prone to, where
+  chasing the single cheapest ride anywhere can send the visitor back and
+  forth between zones, burning walk time and letting queues grow in transit.
+- build_schedule_greedy: the original park-wide approach -- at each step,
+  picks the single cheapest-wait reachable ride anywhere in the park. Kept
+  only so its cost can be compared against the zoned version (see
+  compare_greedy_vs_zoned).
+
+Both are greedy heuristics, not a globally optimal tour -- they won't always
+minimize total wait over the whole day, but they're simple, fast, and
+re-evaluate every step against the live model prediction.
 
 Usage:
-    python src/planner.py   # runs the built-in example
+    python src/planner.py   # runs the built-in example, including a
+                             # greedy-vs-zoned comparison
 """
 
 import datetime as dt
@@ -29,6 +44,7 @@ import pandas as pd
 from extract import Constraints
 
 RIDES_PATH = "data/rides.json"
+ZONES_PATH = "data/zones.json"
 MODEL_PATH = "models/wait_time_lgbm.txt"
 ATTENDANCE_PATH = "data/raw/attendance.csv"
 WEATHER_PATH = "data/raw/weather_data.csv"
@@ -49,6 +65,11 @@ RIDE_DURATION_MIN = 5
 
 
 def load_rides(path: str = RIDES_PATH) -> list[dict]:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_zones(path: str = ZONES_PATH) -> dict:
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
@@ -152,15 +173,95 @@ def _predict_wait(
     return max(0.0, float(prediction))
 
 
-def build_schedule(
+def _travel_minutes(
+    from_zone: str | None,
+    to_zone: str,
+    zone_walk_minutes: dict[str, dict[str, int]] | None,
+) -> int:
+    """Minutes to walk from `from_zone` to `to_zone`. `from_zone is None` means
+    "haven't picked a first ride yet" -- no travel cost. Same zone is always
+    WALK_SAME_ZONE_MIN. Different zones use the real per-pair walk time from
+    data/zones.json when given, else the flat legacy WALK_DIFF_ZONE_MIN
+    (build_schedule_greedy's park-wide approximation)."""
+    if from_zone is None:
+        return 0
+    if to_zone == from_zone:
+        return WALK_SAME_ZONE_MIN
+    if zone_walk_minutes is not None:
+        return zone_walk_minutes[from_zone][to_zone]
+    return WALK_DIFF_ZONE_MIN
+
+
+def _cheapest_in(
+    pool: dict[str, dict],
+    current_time: int,
+    from_zone: str | None,
+    end: int,
+    booster: lgb.Booster,
+    day_of_week: int,
+    month: int,
+    defaults: dict[str, float],
+    zone_walk_minutes: dict[str, dict[str, int]] | None,
+) -> dict | None:
+    """Cheapest-predicted-wait reachable ride in `pool`, or None if nothing in
+    it can be reached before `end`."""
+    best = None
+    for name, ride in pool.items():
+        travel = _travel_minutes(from_zone, ride["zone"], zone_walk_minutes)
+        arrive_at = current_time + travel
+        if arrive_at >= end:
+            continue  # no time left to reach this ride
+
+        predicted_wait = _predict_wait(
+            booster,
+            name,
+            arrive_at,
+            day_of_week,
+            month,
+            defaults["attendance"],
+            defaults["temp"],
+            defaults["rain"],
+        )
+
+        if best is None or predicted_wait < best["predicted_wait"]:
+            best = {
+                "name": name,
+                "ride": ride,
+                "arrive_at": arrive_at,
+                "predicted_wait": predicted_wait,
+            }
+    return best
+
+
+def _preferred_pool(pool: dict[str, dict], prefer: set[str]) -> dict[str, dict]:
+    """Subset of `pool` matching a prefer_tags tag, or `pool` unchanged if
+    `prefer` is empty or nothing in `pool` matches."""
+    if not prefer:
+        return pool
+    preferred = {name: ride for name, ride in pool.items() if prefer & set(ride["tags"])}
+    return preferred if preferred else pool
+
+
+def _make_stop(best: dict) -> dict:
+    return {
+        "time": _format_hhmm(best["arrive_at"]),
+        "ride": best["name"],
+        "zone": best["ride"]["zone"],
+        "predicted_wait_min": round(best["predicted_wait"], 1),
+    }
+
+
+def build_schedule_greedy(
     constraints: Constraints,
     rides: list[dict] | None = None,
     booster: lgb.Booster | None = None,
     date: dt.date | None = None,
 ) -> list[dict]:
-    """Greedily order the rides that satisfy `constraints` between arrival and
-    end time, minimizing predicted wait at each step. Returns a list of
-    {time, ride, zone, predicted_wait_min} dicts in visit order."""
+    """Park-wide greedy scheduler: at each step, picks whichever remaining
+    ride anywhere in the park has the lowest predicted wait (prefer_tags
+    still a hard priority tier), regardless of zone. Kept for comparison
+    against build_schedule_zoned -- see compare_greedy_vs_zoned. This is the
+    approach that can send the visitor criss-crossing between zones."""
     rides = load_rides() if rides is None else rides
     booster = load_model() if booster is None else booster
     date = date or dt.date.today()
@@ -178,40 +279,6 @@ def build_schedule(
     current_zone = None
     schedule = []
 
-    def cheapest_in(pool: dict[str, dict]) -> dict | None:
-        best = None
-        for name, ride in pool.items():
-            if current_zone is None:
-                travel = 0
-            elif ride["zone"] == current_zone:
-                travel = WALK_SAME_ZONE_MIN
-            else:
-                travel = WALK_DIFF_ZONE_MIN
-
-            arrive_at = current_time + travel
-            if arrive_at >= end:
-                continue  # no time left to reach this ride
-
-            predicted_wait = _predict_wait(
-                booster,
-                name,
-                arrive_at,
-                day_of_week,
-                month,
-                defaults["attendance"],
-                defaults["temp"],
-                defaults["rain"],
-            )
-
-            if best is None or predicted_wait < best["predicted_wait"]:
-                best = {
-                    "name": name,
-                    "ride": ride,
-                    "arrive_at": arrive_at,
-                    "predicted_wait": predicted_wait,
-                }
-        return best
-
     while candidates:
         # Preferred rides are a hard priority tier, not a tiebreaker: as long
         # as any prefer_tags ride is still reachable before end_time, it's
@@ -221,32 +288,203 @@ def build_schedule(
         # rides.
         best = None
         if prefer:
-            preferred_pool = {
-                name: ride for name, ride in candidates.items() if prefer & set(ride["tags"])
-            }
-            if preferred_pool:
-                best = cheapest_in(preferred_pool)
+            preferred = {name: r for name, r in candidates.items() if prefer & set(r["tags"])}
+            if preferred:
+                best = _cheapest_in(preferred, current_time, current_zone, end, booster, day_of_week, month, defaults, None)
 
         if best is None:
-            best = cheapest_in(candidates)
+            best = _cheapest_in(candidates, current_time, current_zone, end, booster, day_of_week, month, defaults, None)
 
         if best is None:
             break  # nothing reachable before end_time
 
-        schedule.append(
-            {
-                "time": _format_hhmm(best["arrive_at"]),
-                "ride": best["name"],
-                "zone": best["ride"]["zone"],
-                "predicted_wait_min": round(best["predicted_wait"], 1),
-            }
-        )
-
+        schedule.append(_make_stop(best))
         current_time = best["arrive_at"] + round(best["predicted_wait"]) + RIDE_DURATION_MIN
         current_zone = best["ride"]["zone"]
         del candidates[best["name"]]
 
     return schedule
+
+
+def _run_zoned_pass(
+    start_zone: str,
+    candidates: dict[str, dict],
+    arrival: int,
+    end: int,
+    booster: lgb.Booster,
+    day_of_week: int,
+    month: int,
+    defaults: dict[str, float],
+    prefer: set[str],
+    zone_walk_minutes: dict[str, dict[str, int]],
+    adjacency: dict[str, list[str]],
+) -> list[dict]:
+    """One zone-clustered pass starting in `start_zone`. Mutates `candidates`
+    (caller must pass a fresh copy per start zone)."""
+    current_time = arrival
+    active_zone = start_zone  # which zone's candidates we're working through
+    from_zone = None  # None => no ride picked yet, so the first one is free of travel cost
+    schedule = []
+
+    while candidates:
+        zone_pool = {name: r for name, r in candidates.items() if r["zone"] == active_zone}
+        best = None
+        if zone_pool:
+            best = _cheapest_in(
+                _preferred_pool(zone_pool, prefer),
+                current_time, from_zone, end, booster, day_of_week, month, defaults, zone_walk_minutes,
+            )
+
+        if best is None:
+            # Current zone exhausted (empty, or nothing left in it reachable
+            # before end_time) -- move on. Prefer an adjacent zone that still
+            # has something in it; only fall back to a distant zone if no
+            # adjacent one does.
+            adjacent_with_candidates = {
+                name: r for name, r in candidates.items() if r["zone"] in adjacency.get(active_zone, [])
+            }
+            move_pool = adjacent_with_candidates if adjacent_with_candidates else candidates
+            if not move_pool:
+                break
+
+            best = _cheapest_in(
+                _preferred_pool(move_pool, prefer),
+                current_time, from_zone, end, booster, day_of_week, month, defaults, zone_walk_minutes,
+            )
+            if best is None:
+                break  # nothing reachable anywhere before end_time
+
+        schedule.append(_make_stop(best))
+        current_time = best["arrive_at"] + round(best["predicted_wait"]) + RIDE_DURATION_MIN
+        active_zone = best["ride"]["zone"]
+        from_zone = active_zone
+        del candidates[best["name"]]
+
+    return schedule
+
+
+def build_schedule_zoned(
+    constraints: Constraints,
+    rides: list[dict] | None = None,
+    booster: lgb.Booster | None = None,
+    date: dt.date | None = None,
+    zones: dict | None = None,
+) -> list[dict]:
+    """Zone-clustered scheduler (the default -- see build_schedule). Works
+    through one zone at a time: cheapest-predicted-wait first within it,
+    prefer_tags still a hard priority tier, and only moves to another zone
+    once the current one has nothing left reachable before end_time. When
+    moving, an adjacent zone (data/zones.json) is preferred over a distant
+    one. Every zone is tried as the starting zone; whichever full schedule
+    has the lowest total (wait + walk) time cost is returned (ties broken by
+    more rides completed)."""
+    rides = load_rides() if rides is None else rides
+    booster = load_model() if booster is None else booster
+    zones = load_zones() if zones is None else zones
+    date = date or dt.date.today()
+
+    base_candidates = {r["name"]: r for r in filter_rides(rides, constraints)}
+    if not base_candidates:
+        return []
+
+    arrival = _parse_hhmm(constraints.arrival_time or DEFAULT_ARRIVAL)
+    end = _parse_hhmm(constraints.end_time or DEFAULT_END)
+    day_of_week = date.weekday()
+    month = date.month
+    defaults = _monthly_defaults()[month]
+    prefer = set(constraints.prefer_tags)
+
+    best_schedule: list[dict] | None = None
+    best_cost = None
+    best_num_rides = -1
+
+    for start_zone in zones["zones"]:
+        schedule = _run_zoned_pass(
+            start_zone,
+            dict(base_candidates),
+            arrival, end, booster, day_of_week, month, defaults, prefer,
+            zones["walk_minutes"], zones["adjacent"],
+        )
+        stats = schedule_stats(schedule)
+        cost = stats["total_wait_min"] + stats["total_walk_min"]
+
+        if (
+            best_schedule is None
+            or cost < best_cost
+            or (cost == best_cost and stats["num_rides"] > best_num_rides)
+        ):
+            best_schedule = schedule
+            best_cost = cost
+            best_num_rides = stats["num_rides"]
+
+    return best_schedule
+
+
+def build_schedule(
+    constraints: Constraints,
+    rides: list[dict] | None = None,
+    booster: lgb.Booster | None = None,
+    date: dt.date | None = None,
+    zones: dict | None = None,
+) -> list[dict]:
+    """Default planner entry point -- see build_schedule_zoned."""
+    return build_schedule_zoned(constraints, rides=rides, booster=booster, date=date, zones=zones)
+
+
+def schedule_stats(schedule: list[dict]) -> dict:
+    """Total wait/walk minutes, zone-change count, and ride count for a
+    schedule returned by either scheduler. Walk time between consecutive
+    stops is reconstructed exactly from their `time`/`predicted_wait_min`
+    fields (mirroring the arithmetic both schedulers use to advance the
+    clock), so this works on any schedule of that shape without needing the
+    scheduler to record it separately."""
+    if not schedule:
+        return {"num_rides": 0, "total_wait_min": 0.0, "total_walk_min": 0.0, "zone_changes": 0}
+
+    total_wait = sum(stop["predicted_wait_min"] for stop in schedule)
+    total_walk = 0.0
+    zone_changes = 0
+    for prev, nxt in zip(schedule, schedule[1:]):
+        prev_end = _parse_hhmm(prev["time"]) + round(prev["predicted_wait_min"]) + RIDE_DURATION_MIN
+        total_walk += max(0, _parse_hhmm(nxt["time"]) - prev_end)
+        if nxt["zone"] != prev["zone"]:
+            zone_changes += 1
+
+    return {
+        "num_rides": len(schedule),
+        "total_wait_min": round(total_wait, 1),
+        "total_walk_min": round(total_walk, 1),
+        "zone_changes": zone_changes,
+    }
+
+
+def compare_greedy_vs_zoned(
+    constraints: Constraints,
+    rides: list[dict] | None = None,
+    booster: lgb.Booster | None = None,
+    date: dt.date | None = None,
+    zones: dict | None = None,
+) -> dict:
+    """Build both schedules for the same constraints and return their stats
+    side by side, e.g. for reporting the zoned version's improvement."""
+    rides = load_rides() if rides is None else rides
+    booster = load_model() if booster is None else booster
+    zones = load_zones() if zones is None else zones
+
+    greedy_schedule = build_schedule_greedy(constraints, rides=rides, booster=booster, date=date)
+    zoned_schedule = build_schedule_zoned(constraints, rides=rides, booster=booster, date=date, zones=zones)
+
+    return {
+        "greedy": {"schedule": greedy_schedule, **schedule_stats(greedy_schedule)},
+        "zoned": {"schedule": zoned_schedule, **schedule_stats(zoned_schedule)},
+    }
+
+
+def print_comparison(comparison: dict) -> None:
+    g, z = comparison["greedy"], comparison["zoned"]
+    print(f"{'':<22} {'Rides':>7} {'Wait (min)':>12} {'Walk (min)':>12} {'Zone changes':>14}")
+    print(f"{'Greedy (park-wide)':<22} {g['num_rides']:>7} {g['total_wait_min']:>12.1f} {g['total_walk_min']:>12.1f} {g['zone_changes']:>14}")
+    print(f"{'Zoned (clustered)':<22} {z['num_rides']:>7} {z['total_wait_min']:>12.1f} {z['total_walk_min']:>12.1f} {z['zone_changes']:>14}")
 
 
 def print_schedule(schedule: list[dict]) -> None:
@@ -272,8 +510,13 @@ def main() -> None:
     )
     print(f"Constraints: {example_constraints}\n")
 
+    print("=== Zoned schedule (default) ===")
     schedule = build_schedule(example_constraints)
     print_schedule(schedule)
+
+    print("\n=== Greedy vs. zoned comparison, same request ===")
+    comparison = compare_greedy_vs_zoned(example_constraints)
+    print_comparison(comparison)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,18 @@
+{
+  "_note": "Walking-time graph between data/rides.json's 5 zones, arranged as a ring (Mystic Quarter - Kids Kingdom - Lagoon Cove - Coaster Canyon - Thrill Peak - back to Mystic Quarter). Adjacent (ring-neighbour) zones are an 8-minute walk; the two non-adjacent zones from any given zone are a 15-minute walk. Fabricated, like the rest of data/rides.json's zone layout -- not a real park map.",
+  "zones": ["Coaster Canyon", "Kids Kingdom", "Lagoon Cove", "Mystic Quarter", "Thrill Peak"],
+  "adjacent": {
+    "Coaster Canyon": ["Lagoon Cove", "Thrill Peak"],
+    "Kids Kingdom": ["Lagoon Cove", "Mystic Quarter"],
+    "Lagoon Cove": ["Coaster Canyon", "Kids Kingdom"],
+    "Mystic Quarter": ["Kids Kingdom", "Thrill Peak"],
+    "Thrill Peak": ["Coaster Canyon", "Mystic Quarter"]
+  },
+  "walk_minutes": {
+    "Coaster Canyon": {"Coaster Canyon": 0, "Kids Kingdom": 15, "Lagoon Cove": 8, "Mystic Quarter": 15, "Thrill Peak": 8},
+    "Kids Kingdom": {"Coaster Canyon": 15, "Kids Kingdom": 0, "Lagoon Cove": 8, "Mystic Quarter": 8, "Thrill Peak": 15},
+    "Lagoon Cove": {"Coaster Canyon": 8, "Kids Kingdom": 8, "Lagoon Cove": 0, "Mystic Quarter": 15, "Thrill Peak": 15},
+    "Mystic Quarter": {"Coaster Canyon": 15, "Kids Kingdom": 8, "Lagoon Cove": 15, "Mystic Quarter": 0, "Thrill Peak": 8},
+    "Thrill Peak": {"Coaster Canyon": 8, "Kids Kingdom": 15, "Lagoon Cove": 15, "Mystic Quarter": 8, "Thrill Peak": 0}
+  }
+}
