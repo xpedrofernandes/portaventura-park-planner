@@ -101,12 +101,32 @@ Evaluated against `data/eval_set.json` (25 hand-written natural-language request
 | Plan constraint-satisfaction | **100%** — every schedule built from extracted constraints honors its own height/tag/time-window limits |
 | Prefer-tags satisfaction | **86.7%** — mean fraction of each schedule's first 5 rides that match a preferred tag, across the 12 eval cases with non-empty `prefer_tags` |
 
+### Zone-clustering comparison
+
+Mean over the same 25 eval cases, greedy (park-wide) vs. zoned (clustered) planner:
+
+| | Rides | Wait (min) | Walk (min) | Zone changes |
+|---|---|---|---|---|
+| Greedy (park-wide) | 17.4 | 279.4 | 139.8 | 11.6 |
+| Zoned (clustered) | 17.5 | 287.4 | 92.2 | 3.0 |
+
+This is a trade-off, not a strict win: 34% less walking and 74% fewer zone changes, for about 3% more queueing.
+
+## What the evaluation caught
+
+Three things the harness surfaced that a demo run wouldn't have:
+
+1. **Leaky baseline.** The forecaster's comparison baseline (a median wait-time lookup) was originally fit on all years, 2018–2022, including the 2022 test period — it had already seen the answers, and scored MAE 9.08 that way, edging out the model. Recomputing it as train-only (2018–2021, matching what the model actually trains on) gave a fair MAE of 11.49, which the model beats (9.89). The Results table above reports the fair number.
+2. **Non-reproducible extraction.** Scores weren't reproducible run to run until `temperature=0` was pinned on the Claude API call — and even then they vary 76–80% across runs on the same 25 cases. `evaluate.py --runs N` exists to surface this directly: it reports mean/min/max rather than one run's score, and separates cases that fail on every run (a real prompt gap) from ones that only fail sometimes (sampling noise).
+3. **A blind spot in constraint-satisfaction.** Plan constraint-satisfaction read 100% while `prefer_tags` was, at one point, being effectively ignored — that metric only checks hard constraints (height, excluded tags, time window), so nothing was actually measuring whether preferred rides got prioritized. Adding prefer-tags satisfaction as a fourth metric caught the gap and gave it a real number (86.7%) to hold steady or improve.
+
 ## Known limitations
 
+- **The ride roster doesn't match the real park.** PortAventura Park's actual attractions are things like Shambhala, Dragon Khan, Furius Baco, Hurakan Condor, Stampida, and Tutuki Splash, organized into six themed worlds (Mediterrània, Polynesia, China, México, SésamoAventura, Far West). The Kaggle source dataset's ride names — Bungee Jump, Zipline, Go-Karts, Spiral Slide, and so on — are generic, and none of them exist at PortAventura. The park attribution in the source data appears to be anonymized itself, so `data/rides.json`'s metadata can't be sourced against real specs — only invented consistently with what's already there.
 - **Ride metadata is fabricated.** `data/rides.json`'s heights, tags, and 5 invented zones (Thrill Peak, Coaster Canyon, Lagoon Cove, Kids Kingdom, Mystic Quarter) are plausible guesses, not sourced from any real PortAventura map or ride specs.
 - **Weather is geolocated wrong.** `weather_data.csv` covers a single fixed lat/lon near Paris, not PortAventura's actual location in Spain — it's the only weather source available, so the forecaster uses it as a proxy anyway.
 - **Data ends 2022-08-18.** There's no more recent wait-time, attendance, or weather data to train or plan against.
-- **The planner is greedy, not optimal.** It picks the cheapest reachable ride at each step (with `prefer_tags` as a hard priority tier); it does not search for the schedule that minimizes total wait over the whole day.
+- **The planner is zone-clustered greedy, not optimal.** It works through one zone at a time using per-pair walk times from `data/zones.json`, trying every zone as a starting point and keeping whichever result has the lowest total time cost — but it's still a heuristic, not a globally optimal tour of the day.
 - **LLM extraction isn't fully deterministic**, even at `temperature=0` — repeated `evaluate.py` runs on the same 25 cases have scored anywhere from 76% to 80%, and even runs with identical aggregate scores can differ on individual unchecked fields.
 - **Two real user intents the schema can't express:**
   - *"the most popular rides"* — there's no popularity/ranking concept anywhere in `Constraints` or `rides.json`; the planner only optimizes for short waits, which is a different (if correlated) thing.
