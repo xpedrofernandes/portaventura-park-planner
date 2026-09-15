@@ -1,5 +1,8 @@
 # Park Planner
 
+<img width="1125" height="908" alt="image" src="https://github.com/user-attachments/assets/5645c1cc-bff8-4907-a8bd-9939e1e9dfab" />
+
+
 Turns a plain-language request ("arriving at 10am, my daughter is 115cm, avoid big drops") into a same-day ride schedule for PortAventura World, ordered to minimize predicted queue time.
 
 ## What it does
