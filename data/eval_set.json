@@ -1,0 +1,140 @@
+{
+  "_decisions": {
+    "toddler_height_cm": 90,
+    "small_child_height_cm": 110,
+    "morning_ends_at": "12:00",
+    "before_dinner_ends_at": "18:00",
+    "after_dinner_starts_at": "19:00",
+    "nothing_scary_tags": ["thrill", "heights"],
+    "park_opens_at": "09:00",
+    "park_closes_at": "22:00",
+    "_note": "Where two children are named, the shorter child's height is the binding constraint."
+  },
+  "cases": [
+    {
+      "id": 1,
+      "request": "we're arriving at 10am and want to hit all the big coasters",
+      "expected": { "arrival_time": "10:00", "prefer_tags": ["coaster", "thrill"] }
+    },
+    {
+      "id": 2,
+      "request": "my son is 115cm, what can he actually go on?",
+      "expected": { "max_height_cm": 115 }
+    },
+    {
+      "id": 3,
+      "request": "toddler in tow, nothing scary, we'll be there from opening",
+      "expected": { "arrival_time": "09:00", "max_height_cm": 90, "exclude_tags": ["thrill", "heights"] }
+    },
+    {
+      "id": 4,
+      "request": "half day only, morning, and please no rides where we get soaked",
+      "expected": { "end_time": "12:00", "exclude_tags": ["water"] }
+    },
+    {
+      "id": 5,
+      "request": "I get motion sick easily so nothing that spins, dinner booked for 7",
+      "expected": { "end_time": "19:00", "exclude_tags": ["spinning"] }
+    },
+    {
+      "id": 6,
+      "request": "in at 11:30, out by 4, kid is 130cm, she loves rollercoasters but hates heights",
+      "expected": { "arrival_time": "11:30", "end_time": "16:00", "max_height_cm": 130, "exclude_tags": ["heights"], "prefer_tags": ["coaster"] }
+    },
+    {
+      "id": 7,
+      "request": "it's pouring rain today, what's worth doing?",
+      "expected": { "prefer_tags": ["indoor"] }
+    },
+    {
+      "id": 8,
+      "request": "just the two of us, we want the most intense stuff you've got",
+      "expected": { "prefer_tags": ["thrill"] }
+    },
+    {
+      "id": 9,
+      "request": "family day out with grandma, keep it gentle",
+      "expected": { "exclude_tags": ["thrill"], "prefer_tags": ["family"] }
+    },
+    {
+      "id": 10,
+      "request": "we only have 2 hours before we have to drive back",
+      "expected": {}
+    },
+    {
+      "id": 11,
+      "request": "arriving 09:00, leaving 21:00, we want to do absolutely everything",
+      "expected": { "arrival_time": "09:00", "end_time": "21:00" }
+    },
+    {
+      "id": 12,
+      "request": "my daughter is 4 foot 2, is that enough for the big one?",
+      "expected": { "max_height_cm": 127 }
+    },
+    {
+      "id": 13,
+      "request": "no water rides please, we didn't bring a change of clothes",
+      "expected": { "exclude_tags": ["water"] }
+    },
+    {
+      "id": 14,
+      "request": "got the little one with us, plus my mum who can't do anything rough. gates open when?",
+      "expected": { "max_height_cm": 110, "exclude_tags": ["thrill"] }
+    },
+    {
+      "id": 15,
+      "request": "I'm terrified of heights but I'll do anything else",
+      "expected": { "exclude_tags": ["heights"] }
+    },
+    {
+      "id": 16,
+      "request": "i will arrive after dinner and only leave when the park closes. i want to do the most popular rides",
+      "expected": { "arrival_time": "19:00", "end_time": "22:00" }
+    },
+    {
+      "id": 17,
+      "request": "birthday trip for a 6 year old, she's about 1m10",
+      "expected": { "max_height_cm": 110 }
+    },
+    {
+      "id": 18,
+      "request": "anything indoors, it's 38 degrees out there",
+      "expected": { "prefer_tags": ["indoor"] }
+    },
+    {
+      "id": 19,
+      "request": "what time does the park close?",
+      "expected": {}
+    },
+    {
+      "id": 20,
+      "request": "morning only, kids are 105 and 130, no spinning rides for the younger one",
+      "expected": { "end_time": "12:00", "max_height_cm": 105, "exclude_tags": ["spinning"] }
+    },
+    {
+      "id": 21,
+      "request": "my wife is pregnant so nothing rough, and we have a reservation at 19:30",
+      "expected": { "end_time": "19:30", "exclude_tags": ["thrill"] }
+    },
+    {
+      "id": 22,
+      "request": "is the food any good there?",
+      "expected": {}
+    },
+    {
+      "id": 23,
+      "request": "we're staying until close, start with whatever has the shortest queues",
+      "expected": { "end_time": "22:00" }
+    },
+    {
+      "id": 24,
+      "request": "two adults two kids under 8, no water, no big drops, need to leave by six for dinner",
+      "expected": { "end_time": "18:00", "max_height_cm": 110, "exclude_tags": ["water", "heights"] }
+    },
+    {
+      "id": 25,
+      "request": "do the coasters first then the gentle stuff when we're tired, arriving around half ten",
+      "expected": { "arrival_time": "10:30", "prefer_tags": ["coaster"] }
+    }
+  ]
+}
