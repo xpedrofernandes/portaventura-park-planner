@@ -14,9 +14,15 @@ schedule from the *extracted* constraints. Reports two independent metrics:
     correctness, independent of whether extraction was itself accurate.
 
 Usage:
-    python src/evaluate.py
+    python src/evaluate.py              # single run
+    python src/evaluate.py --runs 3      # repeat 3x, report mean/min/max and
+                                          # which cases fail consistently vs.
+                                          # intermittently (useful since
+                                          # extraction isn't fully
+                                          # deterministic even at temperature=0)
 """
 
+import argparse
 import dataclasses
 import datetime as dt
 import json
@@ -175,9 +181,81 @@ def print_report(results: list[dict]) -> None:
                 print(f"Constraint violation: {v}")
 
 
+def _pct_stats(values: list[float]) -> dict[str, float]:
+    return {"mean": sum(values) / len(values), "min": min(values), "max": max(values)}
+
+
+def print_multi_run_report(all_results: list[list[dict]]) -> None:
+    n_runs = len(all_results)
+    n_cases = len(all_results[0])
+
+    extraction_pcts = [100 * sum(r["extraction_ok"] for r in run) / n_cases for run in all_results]
+    constraint_pcts = [100 * sum(r["constraint_ok"] for r in run) / n_cases for run in all_results]
+    ext_stats = _pct_stats(extraction_pcts)
+    con_stats = _pct_stats(constraint_pcts)
+
+    print(f"\n=== Multi-run summary (N={n_runs}) ===")
+    print(
+        f"Extraction accuracy:          mean {ext_stats['mean']:.1f}%  "
+        f"(min {ext_stats['min']:.1f}%, max {ext_stats['max']:.1f}%)"
+    )
+    print(
+        f"Plan constraint-satisfaction: mean {con_stats['mean']:.1f}%  "
+        f"(min {con_stats['min']:.1f}%, max {con_stats['max']:.1f}%)"
+    )
+    print(f"Per-run extraction accuracy:          {[f'{p:.1f}%' for p in extraction_pcts]}")
+    print(f"Per-run plan constraint-satisfaction: {[f'{p:.1f}%' for p in constraint_pcts]}")
+
+    request_by_id = {r["id"]: r["request"] for r in all_results[0]}
+    fail_counts: dict[int, int] = {case_id: 0 for case_id in request_by_id}
+    for run in all_results:
+        for r in run:
+            if not r["extraction_ok"] or not r["constraint_ok"]:
+                fail_counts[r["id"]] += 1
+
+    always_fail = sorted(cid for cid, count in fail_counts.items() if count == n_runs)
+    intermittent = sorted(cid for cid, count in fail_counts.items() if 0 < count < n_runs)
+    always_pass = sorted(cid for cid, count in fail_counts.items() if count == 0)
+
+    print(f"\n=== Case consistency across {n_runs} runs ===")
+    print(f"Always pass: {len(always_pass)}/{len(request_by_id)} cases -- {always_pass}")
+
+    print(f"\nConsistently fail ({len(always_fail)}):")
+    if not always_fail:
+        print("  None.")
+    for cid in always_fail:
+        print(f"  - case {cid}: {request_by_id[cid]}")
+
+    print(f"\nIntermittently fail ({len(intermittent)}):")
+    if not intermittent:
+        print("  None.")
+    for cid in intermittent:
+        print(f"  - case {cid}: failed {fail_counts[cid]}/{n_runs} runs -- {request_by_id[cid]}")
+
+
 def main() -> None:
-    results = run_evaluation()
-    print_report(results)
+    parser = argparse.ArgumentParser(description="Evaluate extract.py + planner.py against data/eval_set.json.")
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Repeat the full evaluation N times and report mean/min/max plus per-case consistency (default: 1).",
+    )
+    args = parser.parse_args()
+
+    if args.runs <= 1:
+        results = run_evaluation()
+        print_report(results)
+        return
+
+    all_results = []
+    for run_idx in range(1, args.runs + 1):
+        print(f"\n########## Run {run_idx}/{args.runs} ##########")
+        results = run_evaluation()
+        print_report(results)
+        all_results.append(results)
+
+    print_multi_run_report(all_results)
 
 
 if __name__ == "__main__":
