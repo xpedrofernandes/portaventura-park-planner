@@ -24,11 +24,24 @@ MODEL = "claude-haiku-4-5-20251001"
 SYSTEM_PROMPT = f"""\
 You extract ride-planning constraints from a theme park visitor's natural-language request.
 
+The park opens at 09:00 and closes at 22:00.
+
 Only populate a field when the request states or clearly implies it; otherwise omit it.
-- arrival_time / end_time: 24-hour "HH:MM" time strings for when the visit starts/ends.
+- arrival_time / end_time: 24-hour "HH:MM" time strings for when the visit starts/ends. Apply \
+these conventions:
+  - "from opening" / "when the gates open" -> arrival_time "09:00".
+  - "until close" / "until the park closes" / "staying until close" -> end_time "22:00".
+  - "morning" as a time-of-day window (e.g. "morning only") -> end_time "12:00".
+  - "after dinner" describing when the visitor arrives -> arrival_time "19:00".
+  - A dinner reservation, restaurant booking, or any time the visitor must leave by or be done \
+by is an end_time, never an arrival_time -- e.g. "we have a reservation at 19:30" means \
+end_time "19:30". Only set arrival_time when the request says when the visitor arrives, \
+starts, or enters the park.
 - max_height_cm: if the visitor mentions a rider's height (e.g. a child), the height in \
 centimeters. This means the visitor can only go on rides whose minimum height requirement \
-is at or below this value. Convert other units (feet/inches, meters) to centimeters.
+is at or below this value. Convert other units (feet/inches, meters) to centimeters. \
+"toddler" -> 90. "small child" -> 110. If multiple children/heights are mentioned, use the \
+shortest one -- it's the binding constraint.
 - exclude_tags / prefer_tags: category tags for ride types to avoid or prefer. You may ONLY \
 use tags from this fixed list: {", ".join(ALLOWED_TAGS)}. Pick the closest matching tag(s) \
 for anything the visitor implies (e.g. "big drop" -> "thrill" and/or "heights"); do not invent \
@@ -132,6 +145,10 @@ def extract_constraints(request: str, client: anthropic.Anthropic | None = None)
         tools=[TOOL_SCHEMA],
         tool_choice={"type": "tool", "name": "extract_ride_constraints"},
         messages=[{"role": "user", "content": request}],
+        # This SDK build's typed `messages.create` signature doesn't expose
+        # `temperature` directly (checked via inspect.signature) -- pass it
+        # through extra_body so it still reaches the API.
+        extra_body={"temperature": 0},
     )
 
     tool_use = next(b for b in response.content if b.type == "tool_use")
